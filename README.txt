@@ -1,4 +1,4 @@
-# README - API_Test Unity Project
+# README - FrontEnd
 
 Este proyecto es una aplicación de Unity que simula una sesión de "Shark Tank" (tanque de tiburones) interactiva. Permite a un emprendedor practicar pitches ante jueces virtuales impulsados por IA, utilizando un backend API para manejar la lógica de conversación multiagente.
 
