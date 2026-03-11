@@ -10,7 +10,7 @@ public class AgentPanelUI : MonoBehaviour
 
     public string AgentId => agentId;
 
-    // Set the message for this agent panel
+    //Set the message for this agent panel
     public void SetMessage(AgentMessage msg)
     {
         if (agentNameText != null)
@@ -19,12 +19,12 @@ public class AgentPanelUI : MonoBehaviour
         if (messageText != null)
             messageText.text = msg.text;
 
-        // Optional: Update portrait based on agent_id or emotion
-        // For now, just log
+        //Optional: Update portrait based on agent_id or emotion
+        //For now, just log
         Debug.Log($"Displaying message for {msg.agent_id}: {msg.text}");
     }
 
-    // Clear the panel
+    //Clear the panel
     public void Clear()
     {
         if (agentNameText != null)
@@ -33,6 +33,6 @@ public class AgentPanelUI : MonoBehaviour
         if (messageText != null)
             messageText.text = "";
 
-        // Optional: Reset portrait
+        //Optional: Reset portrait
     }
 }
