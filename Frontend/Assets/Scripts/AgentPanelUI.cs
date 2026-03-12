@@ -1,11 +1,12 @@
 using UnityEngine;
 using UnityEngine.UI;
+using TMPro;
 
 public class AgentPanelUI : MonoBehaviour
 {
     [SerializeField] private string agentId; // Set in Inspector, e.g., "entrepreneur", "financial_hawk"
-    [SerializeField] private Text agentNameText;
-    [SerializeField] private Text messageText;
+    [SerializeField] private TMP_Text agentNameText;
+    [SerializeField] private TMP_Text messageText;
     [SerializeField] private Image portraitImage; // Optional
 
     public string AgentId => agentId;
