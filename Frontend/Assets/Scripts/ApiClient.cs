@@ -8,7 +8,7 @@ public class ApiClient : MonoBehaviour
 {
     [SerializeField] private string baseUrl = "http://localhost:8000"; // Configurable from Inspector
 
-    private const string START_SESSION_ENDPOINT = "/api/start-pitch";
+    private const string START_SESSION_ENDPOINT = "/api/session/start";
     private const string NEXT_TURN_ENDPOINT = "/api/session/next-turn";
 
     // Start a new session
