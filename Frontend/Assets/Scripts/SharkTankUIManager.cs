@@ -2,12 +2,13 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
+using TMPro;
 
 public class SharkTankUIManager : MonoBehaviour
 {
     [SerializeField] private ApiClient apiClient;
     [SerializeField] private List<AgentPanelUI> agentPanels; // Assign in Inspector
-    [SerializeField] private InputField userInputField; // For user replies
+    [SerializeField] private TMP_InputField userInputField; // For user replies
     [SerializeField] private Button sendButton;
 
     private string currentSessionId;
