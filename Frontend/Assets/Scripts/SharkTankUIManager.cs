@@ -6,28 +6,11 @@ using TMPro;
 public class SharkTankUIManager : MonoBehaviour
 {
     [SerializeField] private ApiClient apiClient;
-    [SerializeField] private List<AgentPanelUI> agentPanels;
-    [SerializeField] private TMP_InputField userInputField;
-    [SerializeField] private Button sendButton;
+    [SerializeField] private DialogueManager dialogueManager;
 
-    private string currentSessionId;
-    private int currentTurn;
-
-    private Dictionary<string, AgentPanelUI> agentPanelMap = new Dictionary<string, AgentPanelUI>();
-
-    private void Start()
-    {
-        foreach (var panel in agentPanels)
-        {
-            if (!string.IsNullOrEmpty(panel.AgentId))
-            {
-                agentPanelMap[panel.AgentId] = panel;
-            }
-        }
-
-        if (sendButton != null)
-            sendButton.onClick.AddListener(SendUserReply);
-    }
+    // Expuesto para que DialogueManager pueda leerlo
+    public string CurrentSessionId { get; private set; }
+    public bool CanReply { get; private set; }
 
     public void StartPitch()
     {
@@ -77,92 +60,49 @@ public class SharkTankUIManager : MonoBehaviour
         apiClient.StartSession(request, OnSessionStarted, OnApiError);
     }
 
-    public void SendUserReply()
+    public void SendUserReply(string message)
     {
-        if (string.IsNullOrEmpty(currentSessionId))
+        if (string.IsNullOrEmpty(CurrentSessionId))
         {
-            Debug.LogError("No active session to send reply.");
-            return;
-        }
-
-        string userMessage = userInputField != null ? userInputField.text.Trim() : "";
-
-        if (string.IsNullOrEmpty(userMessage))
-        {
-            Debug.LogWarning("User message is empty.");
+            Debug.LogError("No hay sesión activa.");
             return;
         }
 
         NextTurnRequest request = new NextTurnRequest
         {
-            session_id = currentSessionId,
-            user_message = userMessage
+            session_id = CurrentSessionId,
+            user_message = message
         };
 
         apiClient.NextTurn(request, OnNextTurnReceived, OnApiError);
-
-        if (userInputField != null)
-            userInputField.text = "";
-
-        if (sendButton != null)
-            sendButton.interactable = false;
-    }
-
-    private void ClearAllPanels()
-    {
-        foreach (var panel in agentPanels)
-        {
-            panel.Clear();
-        }
-    }
-
-    public void RenderMessages(SessionTurnResponse response)
-    {
-        foreach (var msg in response.messages)
-        {
-            if (agentPanelMap.TryGetValue(msg.agent_id, out AgentPanelUI panel))
-            {
-                panel.SetMessage(msg);
-            }
-            else
-            {
-                Debug.LogWarning($"No panel found for agent_id: {msg.agent_id}");
-            }
-        }
-
-        currentSessionId = response.session_id;
-        currentTurn = response.turn;
-
-        bool canReply = response.conversation_status == "awaiting_response";
-
-        if (userInputField != null)
-            userInputField.interactable = canReply;
-
-        if (sendButton != null)
-            sendButton.interactable = canReply;
-
-        Debug.Log($"Rendered turn {currentTurn} for session {currentSessionId}");
-        Debug.Log($"Scene: {response.scene}, Status: {response.conversation_status}");
     }
 
     private void OnSessionStarted(SessionTurnResponse response)
     {
-        Debug.Log("Session started successfully.");
-        ClearAllPanels();
-        RenderMessages(response);
+        Debug.Log("Sesión iniciada.");
+        HandleResponse(response);
     }
 
     private void OnNextTurnReceived(SessionTurnResponse response)
     {
-        Debug.Log("Next turn received.");
-        RenderMessages(response);
+        Debug.Log("Turno recibido.");
+        HandleResponse(response);
+    }
+
+    private void HandleResponse(SessionTurnResponse response)
+    {
+        CurrentSessionId = response.session_id;
+        CanReply = response.conversation_status == "awaiting_response";
+
+        Debug.Log($"Scene: {response.scene} | Status: {response.conversation_status}");
+
+        // Pasar los mensajes al DialogueManager para que los muestre con sprites
+        dialogueManager.DisplayMessages(response.messages);
     }
 
     private void OnApiError(string error)
     {
         Debug.LogError($"API Error: {error}");
-
-        if (sendButton != null)
-            sendButton.interactable = true;
+        CanReply = true;
     }
 }
