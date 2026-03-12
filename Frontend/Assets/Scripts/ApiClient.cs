@@ -13,6 +13,7 @@ public class ApiClient : MonoBehaviour
     private const string START_SESSION_ENDPOINT = "/api/session/start";
     private const string NEXT_TURN_ENDPOINT = "/api/session/next-turn";
     private const string MODES_ENDPOINT = "/api/modes";
+    private const string JUDGES_ENDPOINT = "/api/judges";
 
     public void StartSession(StartSessionRequest requestData, Action<SessionTurnResponse> onSuccess, Action<string> onError)
     {
@@ -33,6 +34,11 @@ public class ApiClient : MonoBehaviour
     public void GetModes(Action<Dictionary<string, string>> onSuccess, Action<string> onError = null)
     {
         StartCoroutine(SendGetRequest(MODES_ENDPOINT, onSuccess, onError));
+    }
+
+    public void GetJudges(Action<List<JudgeDefinition>> onSuccess, Action<string> onError = null)
+    {
+        StartCoroutine(SendGetJudgesRequest(JUDGES_ENDPOINT, onSuccess, onError));
     }
 
     private IEnumerator SendPostRequest<TRequest>(
@@ -120,8 +126,52 @@ public class ApiClient : MonoBehaviour
             try
             {
                 string responseText = request.downloadHandler.text;
-                var response = JsonConvert.DeserializeObject<Dictionary<string, string>>(responseText);
-                onSuccess?.Invoke(response);
+                // The backend returns nested objects: {"key": {"name": "...", ...}}
+                // Extract just key -> name for dropdowns
+                var raw = JsonConvert.DeserializeObject<Dictionary<string, Dictionary<string, object>>>(responseText);
+                var result = new Dictionary<string, string>();
+                foreach (var kvp in raw)
+                {
+                    string name = kvp.Value.ContainsKey("name") ? kvp.Value["name"]?.ToString() : kvp.Key;
+                    result[kvp.Key] = name;
+                }
+                onSuccess?.Invoke(result);
+            }
+            catch (Exception e)
+            {
+                string parseError = $"Parse Error: {e.Message}";
+                Debug.LogError(parseError);
+                onError?.Invoke(parseError);
+            }
+        }
+    }
+
+    private IEnumerator SendGetJudgesRequest(
+        string endpoint,
+        Action<List<JudgeDefinition>> onSuccess,
+        Action<string> onError)
+    {
+        string url = baseUrl + endpoint;
+        Debug.Log($"GET {url}");
+
+        using (UnityWebRequest request = UnityWebRequest.Get(url))
+        {
+            yield return request.SendWebRequest();
+
+            if (request.result != UnityWebRequest.Result.Success)
+            {
+                string errorMsg = $"HTTP Error: {request.error}\nStatus Code: {(long)request.responseCode}";
+                Debug.LogError(errorMsg);
+                onError?.Invoke(errorMsg);
+                yield break;
+            }
+
+            try
+            {
+                string responseText = request.downloadHandler.text;
+                var raw = JsonConvert.DeserializeObject<Dictionary<string, JudgeDefinition>>(responseText);
+                var judges = new List<JudgeDefinition>(raw.Values);
+                onSuccess?.Invoke(judges);
             }
             catch (Exception e)
             {
