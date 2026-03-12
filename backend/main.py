@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 from crewai import Agent, Task, Crew, LLM
 import logging
 
-from judges_config import MODES, ModeConfig
+from judges_config import MODES, ModeConfig, JUDGES
 
 # Load environment variables from the same directory as this script
 load_dotenv(Path(__file__).resolve().parent / ".env")
@@ -67,6 +67,7 @@ class JudgeDefinition(BaseModel):
 class StartSessionRequest(BaseModel):
     entrepreneur_name: str
     mode: str
+    pitch: str = ""
     business_idea: BusinessIdeaData
     judges: List[JudgeDefinition]
 
@@ -371,6 +372,23 @@ async def list_modes():
     }
 
 
+@app.get("/api/judges")
+async def list_judges():
+    """Return available judges so the frontend can display them for selection."""
+    return {
+        jid: {
+            "id": j.id,
+            "name": j.name,
+            "title": j.title,
+            "role": j.role,
+            "goal": j.goal,
+            "backstory": j.backstory,
+            "icon": j.icon,
+        }
+        for jid, j in JUDGES.items()
+    }
+
+
 @app.post("/api/session/start", response_model=SessionTurnResponse)
 async def start_session(request: StartSessionRequest):
     """Initialize a new pitch session and return the first turn."""
@@ -394,7 +412,10 @@ async def start_session(request: StartSessionRequest):
         sessions[session_id] = session
 
         # --- Entrepreneur pitch ---
-        pitch = generate_initial_pitch(session)
+        if request.pitch.strip():
+            pitch = request.pitch.strip()
+        else:
+            pitch = generate_initial_pitch(session)
         session.conversation.append({"role": "Entrepreneur", "content": pitch})
 
         entrepreneur_msg = AgentMessage(

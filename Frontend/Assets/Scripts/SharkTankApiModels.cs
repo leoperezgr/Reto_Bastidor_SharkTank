@@ -9,6 +9,7 @@ public class StartSessionRequest
 {
     public string entrepreneur_name;
     public string mode;
+    public string pitch;
     public BusinessIdeaData business_idea;
     public List<JudgeDefinition> judges;
 }
