@@ -3,12 +3,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional, Dict
 import os
+import uuid
+from pathlib import Path
+from datetime import datetime, timezone
 from dotenv import load_dotenv
 from crewai import Agent, Task, Crew, LLM
 import logging
 
-# Load environment variables
-load_dotenv()
+from judges_config import MODES, ModeConfig
+
+# Load environment variables from the same directory as this script
+load_dotenv(Path(__file__).resolve().parent / ".env")
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -17,35 +22,31 @@ logger = logging.getLogger(__name__)
 # Initialize FastAPI app
 app = FastAPI(title="Shark Tank Chat API")
 
-# CORS middleware - allows frontend to communicate with backend
+# CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, specify exact origins
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ===== STEP 1: Gemini Configuration =====
+# ===== Gemini Configuration =====
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini/gemini-1.5-pro")
 
 if not GEMINI_API_KEY:
     raise ValueError("GEMINI_API_KEY environment variable is required")
 
 os.environ["GEMINI_API_KEY"] = GEMINI_API_KEY
-
-model_string = GEMINI_MODEL
 logger.info(f"Using Gemini API with model: {GEMINI_MODEL}")
 
-# ===== STEP 2: Data Models =====
 
-class Message(BaseModel):
-    content: str
-    sender: str  # 'Entrepreneur' or 'Judge'
+# ===== Data Models (aligned with Unity frontend) =====
 
-class BusinessIdea(BaseModel):
+
+class BusinessIdeaData(BaseModel):
     name: str
     description: str
     target_market: str
@@ -54,42 +55,97 @@ class BusinessIdea(BaseModel):
     investment_needed: str
     use_of_funds: str
 
-class JudgeAgent(BaseModel):
+
+class JudgeDefinition(BaseModel):
+    id: str
     name: str
     role: str
     goal: str
     backstory: str
 
-class ChatRequest(BaseModel):
-    business_idea: BusinessIdea
-    judges: List[JudgeAgent]
-    message: Optional[str] = None
-    entrepreneur_name: Optional[str] = None
 
-class ChatResponse(BaseModel):
-    response: str
-    sender: str
-    conversation_history: List[Dict[str, str]]
+class StartSessionRequest(BaseModel):
+    entrepreneur_name: str
+    mode: str
+    business_idea: BusinessIdeaData
+    judges: List[JudgeDefinition]
 
-# ===== STEP 3: Global State =====
 
-conversation_history: List[Dict[str, str]] = []
-current_business_idea: Optional[BusinessIdea] = None
-judge_agents: List[Agent] = []
-current_judges_config: List[Dict[str, str]] = []
-entrepreneur_name: str = ""
+class NextTurnRequest(BaseModel):
+    session_id: str
+    user_message: str
 
-# ===== STEP 4: Agent Creation Functions =====
+
+class AgentMessage(BaseModel):
+    message_id: str
+    agent_id: str
+    agent_name: str
+    agent_role: str
+    text: str
+    emotion: str = "neutral"
+    animation: str = "idle"
+    ui_target: str = "panel"
+    timestamp: str = ""
+
+
+class UiHints(BaseModel):
+    layout: str = "panel"
+    show_typing_effect: bool = True
+    auto_advance: bool = False
+
+
+class SessionTurnResponse(BaseModel):
+    session_id: str
+    turn: int
+    scene: str
+    messages: List[AgentMessage]
+    ui_hints: UiHints
+    conversation_status: str
+
+
+# ===== Session Storage =====
+
+
+class Session:
+    def __init__(
+        self,
+        session_id: str,
+        business_idea: BusinessIdeaData,
+        judges: List[JudgeDefinition],
+        entrepreneur_name: str,
+        mode_config: ModeConfig,
+    ):
+        self.session_id = session_id
+        self.business_idea = business_idea
+        self.judges = judges
+        self.entrepreneur_name = entrepreneur_name
+        self.mode = mode_config
+        self.turn = 0
+        self.judge_round = 0  # how many judge rounds have been executed
+        self.conversation: List[Dict[str, str]] = []
+        self.judge_agents: List[Agent] = []
+        self.last_round_responses: List[Dict] = []  # for panel_debate
+
+
+sessions: Dict[str, Session] = {}
+
+
+# ===== Helpers =====
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _msg_id() -> str:
+    return uuid.uuid4().hex[:12]
+
 
 def create_llm() -> LLM:
-    """Create a Gemini LLM instance for CrewAI"""
-    return LLM(
-        model=model_string,
-        api_key=GEMINI_API_KEY,
-    )
+    return LLM(model=GEMINI_MODEL, api_key=GEMINI_API_KEY)
 
-def create_judge_agents(judges: List[JudgeAgent]) -> List[Agent]:
-    """Create judge agents from the provided configurations"""
+
+def create_judge_agents(judges: List[JudgeDefinition]) -> List[Agent]:
     agents = []
     for judge in judges:
         agent = Agent(
@@ -104,153 +160,341 @@ def create_judge_agents(judges: List[JudgeAgent]) -> List[Agent]:
         logger.info(f"Created judge agent: {judge.name}")
     return agents
 
-def create_entrepreneur_agent() -> Agent:
-    """Create the entrepreneur agent"""
-    return Agent(
+
+def format_idea(idea: BusinessIdeaData) -> str:
+    return (
+        f"Startup: {idea.name}\n"
+        f"Description: {idea.description}\n"
+        f"Target Market: {idea.target_market}\n"
+        f"Revenue Model: {idea.revenue_model}\n"
+        f"Current Traction: {idea.current_traction}\n"
+        f"Investment Needed: {idea.investment_needed}\n"
+        f"Use of Funds: {idea.use_of_funds}"
+    )
+
+
+def build_judge_prompt(
+    judge: JudgeDefinition,
+    idea_str: str,
+    entrepreneur_name: str,
+    conversation: List[Dict[str, str]],
+    mode: ModeConfig,
+    round_number: int,
+    total_rounds: int,
+    peer_responses: Optional[List[Dict]] = None,
+) -> str:
+    """Build a mode-aware, round-aware prompt for a judge agent."""
+
+    history = ""
+    if conversation:
+        history = "\n\nConversation so far:\n" + "\n".join(
+            f"{m['role']}: {m['content']}" for m in conversation
+        )
+
+    debate = ""
+    if peer_responses and mode.group_debate:
+        others = [r for r in peer_responses if r["judge_id"] != judge.id]
+        if others:
+            debate = "\n\nWhat your fellow judges have said:\n" + "\n".join(
+                f"{r['judge_name']}: {r['content']}" for r in others
+            )
+
+    round_ctx = ""
+    if total_rounds > 1:
+        round_ctx = f"\nThis is round {round_number} of {total_rounds}."
+
+    return (
+        f"You are {judge.name}, a {judge.role}.\n\n"
+        f"The entrepreneur {entrepreneur_name} is pitching the following business:\n\n"
+        f"{idea_str}{history}{debate}{round_ctx}\n\n"
+        f"{mode.judge_instruction}\n\n"
+        "IMPORTANT: Do NOT start your response with your name. Just give your response directly."
+    )
+
+
+# ===== Core Logic =====
+
+
+def generate_initial_pitch(session: Session) -> str:
+    """Generate the entrepreneur's opening pitch."""
+    idea = session.business_idea
+    entrepreneur_agent = Agent(
         role="Tech Startup Entrepreneur",
         goal="Pitch your innovative business idea and secure investment",
-        backstory="""You are a passionate entrepreneur with an innovative tech startup.
-        You've developed a revolutionary product and are seeking investment to scale your business.
-        You're confident in your product, but you need to convince the Shark Tank judges
-        that your business model is sound and that you have a clear path to profitability.
-        You understand your market well and have some early traction with customers.""",
+        backstory=(
+            "You are a passionate entrepreneur with an innovative tech startup. "
+            "You've developed a revolutionary product and are seeking investment to scale."
+        ),
         verbose=True,
         allow_delegation=False,
         llm=create_llm(),
     )
 
-# ===== STEP 5: Core Logic Functions =====
-
-def generate_initial_pitch(business_idea: BusinessIdea, entrepreneur_name: str) -> str:
-    """Generate initial pitch for the business idea"""
-    entrepreneur_agent = create_entrepreneur_agent()
-
     task = Task(
         description=f"""Create a compelling initial pitch for your business idea.
 
-        Your name is {entrepreneur_name}.
+        Your name is {session.entrepreneur_name}.
 
         Your business idea:
-        Name: {business_idea.name}
-        Description: {business_idea.description}
-        Target Market: {business_idea.target_market}
-        Revenue Model: {business_idea.revenue_model}
-        Current Traction: {business_idea.current_traction}
-        Investment Needed: {business_idea.investment_needed}
-        Use of Funds: {business_idea.use_of_funds}
+        {format_idea(idea)}
 
-        Start your pitch by greeting the judges: "Hello Sharks, I'm {entrepreneur_name}..."
+        Start your pitch by greeting the judges: "Hello Sharks, I'm {session.entrepreneur_name}..."
 
         Be enthusiastic and concise. Highlight the problem you're solving, your solution,
         market opportunity, and why your team is uniquely positioned to succeed.
-        End with a clear ask for the investment amount and equity offer.""",
+        End with a clear ask for the investment amount.""",
         expected_output="A compelling business pitch for Shark Tank",
         agent=entrepreneur_agent,
     )
 
     crew = Crew(agents=[entrepreneur_agent], tasks=[task])
-    result = crew.kickoff()
-    return result.raw
+    return crew.kickoff().raw.strip()
 
 
-def generate_judge_response(
-    business_idea: BusinessIdea, conversation: List[Dict[str, str]]
-) -> List[tuple[str, str]]:
-    """
-    Generate responses from ALL judges.
-    Returns: List of (response_text, judge_name) tuples
-    """
-    if not judge_agents:
-        raise HTTPException(status_code=400, detail="No judges configured")
+def run_judge_round(session: Session) -> List[AgentMessage]:
+    """Execute one round of judge responses, using mode-aware prompts."""
+    session.judge_round += 1
+    idea_str = format_idea(session.business_idea)
+    total_rounds = session.mode.total_rounds or 1
+    messages: List[AgentMessage] = []
+    round_responses: List[Dict] = []
 
-    responses = []
-    context = "\n".join([f"{msg['role']}: {msg['content']}" for msg in conversation])
+    for idx, judge_agent in enumerate(session.judge_agents):
+        judge = session.judges[idx]
 
-    for idx, judge_agent in enumerate(judge_agents):
-        judge_name = (
-            current_judges_config[idx]["name"]
-            if idx < len(current_judges_config)
-            else f"Judge {idx + 1}"
+        prompt = build_judge_prompt(
+            judge=judge,
+            idea_str=idea_str,
+            entrepreneur_name=session.entrepreneur_name,
+            conversation=session.conversation,
+            mode=session.mode,
+            round_number=session.judge_round,
+            total_rounds=total_rounds,
+            peer_responses=session.last_round_responses if session.mode.group_debate else None,
         )
 
         task = Task(
-            description=f"""You are {judge_name}. Evaluate the entrepreneur's pitch and respond appropriately.
-
-            Business being evaluated:
-            Name: {business_idea.name}
-            Description: {business_idea.description}
-            Target Market: {business_idea.target_market}
-            Revenue Model: {business_idea.revenue_model}
-            Current Traction: {business_idea.current_traction}
-            Investment Needed: {business_idea.investment_needed}
-            Use of Funds: {business_idea.use_of_funds}
-
-            Conversation history:
-            {context}
-
-            Respond with your thoughts, questions or investment decision. Be critical but constructive.
-            If you need more information, ask specific questions. If you have enough information,
-            make your final investment decision.
-
-            IMPORTANT: Start your response with "{judge_name}: " to identify yourself clearly.""",
-            expected_output="Evaluation and feedback on the entrepreneur's pitch",
+            description=prompt,
+            expected_output="Judge's response to the entrepreneur",
             agent=judge_agent,
         )
-
         crew = Crew(agents=[judge_agent], tasks=[task])
-        result = crew.kickoff()
-        responses.append((result.raw, judge_name))
+        response_text = crew.kickoff().raw.strip()
 
-    return responses
+        # Strip judge name prefix if added by LLM
+        prefix = f"{judge.name}: "
+        if response_text.startswith(prefix):
+            response_text = response_text[len(prefix):]
+
+        round_responses.append({
+            "judge_id": judge.id,
+            "judge_name": judge.name,
+            "content": response_text,
+        })
+
+        session.conversation.append(
+            {"role": judge.name, "content": response_text}
+        )
+
+        messages.append(AgentMessage(
+            message_id=_msg_id(),
+            agent_id=judge.id,
+            agent_name=judge.name,
+            agent_role=judge.role,
+            text=response_text,
+            timestamp=_now(),
+        ))
+
+    session.last_round_responses = round_responses
+    return messages
 
 
-def generate_entrepreneur_response(
-    business_idea: BusinessIdea,
-    conversation: List[Dict[str, str]],
-    user_message: str,
-) -> str:
-    """Generate entrepreneur's response to judge feedback"""
-    entrepreneur_agent = create_entrepreneur_agent()
-    context = "\n".join([f"{msg['role']}: {msg['content']}" for msg in conversation])
+def determine_scene_and_status(session: Session) -> tuple[str, str]:
+    """Determine the current scene label and whether the session is complete."""
+    mode = session.mode
+    jr = session.judge_round  # how many judge rounds have been executed
 
-    task = Task(
-        description=f"""Respond to the Shark Tank judge's feedback or questions.
+    if mode.id == "quick":
+        # 1 round total (the start round is the verdict)
+        return "verdict", "complete"
 
-        Your business idea:
-        Name: {business_idea.name}
-        Description: {business_idea.description}
-        Target Market: {business_idea.target_market}
-        Revenue Model: {business_idea.revenue_model}
-        Current Traction: {business_idea.current_traction}
-        Investment Needed: {business_idea.investment_needed}
-        Use of Funds: {business_idea.use_of_funds}
+    if mode.id == "rapid_fire":
+        if jr <= 1:
+            return "qa", "awaiting_response"
+        else:
+            return "verdict", "complete"
 
-        Conversation history:
-        {context}
+    if mode.id == "panel_debate":
+        if jr <= 1:
+            return "qa", "awaiting_response"
+        # After entrepreneur answers round 1, we run debate + verdict
+        # back-to-back (rounds 2 & 3), so when jr >= 3 we're done
+        if jr >= 3:
+            return "verdict", "complete"
+        return "debate", "awaiting_response"
 
-        User's input: {user_message}
+    # normal & full_tank
+    is_last_qa = jr >= mode.qa_rounds
+    if is_last_qa and not mode.allow_negotiation:
+        return "verdict", "complete"
+    if is_last_qa and mode.allow_negotiation:
+        return "negotiation", "awaiting_response"
+    if jr > mode.qa_rounds:
+        # negotiation round done
+        return "negotiation", "complete"
+    return "qa", "awaiting_response"
 
-        Respond to the judge's feedback or questions thoughtfully.
-        Address any concerns they raise, provide additional details about your business when needed,
-        and try to convince them of the value of your idea. Be confident but not arrogant.""",
-        expected_output="A thoughtful response to the judge's feedback",
-        agent=entrepreneur_agent,
-    )
 
-    crew = Crew(agents=[entrepreneur_agent], tasks=[task])
-    result = crew.kickoff()
-    return result.raw
+# ===== API Endpoints =====
 
-# ===== STEP 6: API Endpoints =====
 
 @app.get("/")
 async def root():
-    return {"status": "Shark Tank Chat API is running", "model": model_string}
+    return {"status": "Shark Tank Chat API is running", "model": GEMINI_MODEL}
+
+
+@app.get("/api/modes")
+async def list_modes():
+    """Return available simulation modes so the frontend can display them."""
+    return {
+        mid: {
+            "name": m.name,
+            "icon": m.icon,
+            "description": m.description,
+            "qa_rounds": m.qa_rounds,
+            "allow_negotiation": m.allow_negotiation,
+            "group_debate": m.group_debate,
+        }
+        for mid, m in MODES.items()
+    }
+
+
+@app.post("/api/session/start", response_model=SessionTurnResponse)
+async def start_session(request: StartSessionRequest):
+    """Initialize a new pitch session and return the first turn."""
+    mode_config = MODES.get(request.mode)
+    if not mode_config:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown mode '{request.mode}'. Available: {list(MODES.keys())}",
+        )
+
+    try:
+        session_id = uuid.uuid4().hex[:16]
+        session = Session(
+            session_id=session_id,
+            business_idea=request.business_idea,
+            judges=request.judges,
+            entrepreneur_name=request.entrepreneur_name,
+            mode_config=mode_config,
+        )
+        session.judge_agents = create_judge_agents(request.judges)
+        sessions[session_id] = session
+
+        # --- Entrepreneur pitch ---
+        pitch = generate_initial_pitch(session)
+        session.conversation.append({"role": "Entrepreneur", "content": pitch})
+
+        entrepreneur_msg = AgentMessage(
+            message_id=_msg_id(),
+            agent_id="entrepreneur",
+            agent_name=session.entrepreneur_name,
+            agent_role="Entrepreneur",
+            text=pitch,
+            timestamp=_now(),
+        )
+
+        # --- First judge round ---
+        judge_messages = run_judge_round(session)
+
+        session.turn = 1
+        scene, status = determine_scene_and_status(session)
+
+        return SessionTurnResponse(
+            session_id=session_id,
+            turn=session.turn,
+            scene=scene,
+            messages=[entrepreneur_msg] + judge_messages,
+            ui_hints=UiHints(
+                layout="panel",
+                show_typing_effect=True,
+                auto_advance=(status == "complete"),
+            ),
+            conversation_status=status,
+        )
+
+    except Exception as e:
+        logger.error(f"Error starting session: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error starting session: {str(e)}")
+
+
+@app.post("/api/session/next-turn", response_model=SessionTurnResponse)
+async def next_turn(request: NextTurnRequest):
+    """Process the entrepreneur's reply and return judge responses."""
+    session = sessions.get(request.session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    # Don't accept turns on completed sessions
+    _, current_status = determine_scene_and_status(session)
+    if current_status == "complete":
+        raise HTTPException(status_code=400, detail="Session is already complete")
+
+    try:
+        # --- Add entrepreneur message ---
+        session.conversation.append(
+            {"role": "Entrepreneur", "content": request.user_message}
+        )
+
+        entrepreneur_msg = AgentMessage(
+            message_id=_msg_id(),
+            agent_id="entrepreneur",
+            agent_name=session.entrepreneur_name,
+            agent_role="Entrepreneur",
+            text=request.user_message,
+            timestamp=_now(),
+        )
+
+        all_messages = [entrepreneur_msg]
+
+        # --- Run judge round(s) ---
+        # For panel_debate after the entrepreneur answers round 1,
+        # we run both the debate round and the verdict round back-to-back
+        if session.mode.id == "panel_debate" and session.judge_round == 1:
+            # Round 2: debate
+            debate_messages = run_judge_round(session)
+            all_messages.extend(debate_messages)
+            # Round 3: final verdict
+            verdict_messages = run_judge_round(session)
+            all_messages.extend(verdict_messages)
+        else:
+            judge_messages = run_judge_round(session)
+            all_messages.extend(judge_messages)
+
+        session.turn += 1
+        scene, status = determine_scene_and_status(session)
+
+        return SessionTurnResponse(
+            session_id=session.session_id,
+            turn=session.turn,
+            scene=scene,
+            messages=all_messages,
+            ui_hints=UiHints(
+                layout="panel",
+                show_typing_effect=True,
+                auto_advance=(status == "complete"),
+            ),
+            conversation_status=status,
+        )
+
+    except Exception as e:
+        logger.error(f"Error processing turn: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error processing turn: {str(e)}")
 
 
 @app.post("/api/test-connection")
 async def test_connection():
-    """Test Gemini API connection"""
+    """Test Gemini API connection."""
     try:
         test_llm = create_llm()
         test_agent = Agent(
@@ -260,13 +504,11 @@ async def test_connection():
             verbose=True,
             llm=test_llm,
         )
-
         test_task = Task(
             description="Say 'Hello, the connection is working!' and confirm you are using the Gemini API.",
             expected_output="A confirmation message",
             agent=test_agent,
         )
-
         test_crew = Crew(agents=[test_agent], tasks=[test_task])
         result = test_crew.kickoff()
 
@@ -274,7 +516,7 @@ async def test_connection():
             "status": "success",
             "message": "Connection test successful",
             "api": "Gemini",
-            "model": model_string,
+            "model": GEMINI_MODEL,
             "response": result.raw,
         }
     except Exception as e:
@@ -282,101 +524,15 @@ async def test_connection():
         raise HTTPException(status_code=500, detail=f"Connection test failed: {str(e)}")
 
 
-@app.post("/api/start-pitch")
-async def start_pitch(request: ChatRequest):
-    """Initialize a new pitch session"""
-    global conversation_history, current_business_idea, judge_agents, current_judges_config, entrepreneur_name
-
-    try:
-        conversation_history = []
-        current_business_idea = request.business_idea
-        entrepreneur_name = request.entrepreneur_name or "Entrepreneur"
-        current_judges_config = [{"name": j.name, "role": j.role} for j in request.judges]
-        judge_agents = create_judge_agents(request.judges)
-
-        initial_pitch = generate_initial_pitch(request.business_idea, entrepreneur_name)
-        conversation_history.append({
-            "role": "Entrepreneur",
-            "content": initial_pitch,
-            "sender_name": entrepreneur_name,
-        })
-
-        judge_responses = generate_judge_response(request.business_idea, conversation_history)
-        for judge_response, judge_name in judge_responses:
-            conversation_history.append({
-                "role": "Judge",
-                "content": judge_response,
-                "judge_name": judge_name,
-            })
-
-        return ChatResponse(
-            response=f"Responses from {len(judge_responses)} judge(s)",
-            sender="Judge",
-            conversation_history=conversation_history,
-        )
-
-    except Exception as e:
-        logger.error(f"Error starting pitch: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error starting pitch: {str(e)}")
-
-
-@app.post("/api/send-message")
-async def send_message(message: Message):
-    """Send a message in the ongoing conversation"""
-    global conversation_history, current_business_idea, entrepreneur_name
-
-    if not current_business_idea:
-        raise HTTPException(
-            status_code=400,
-            detail="No active pitch session. Please start a pitch first.",
-        )
-
-    try:
-        conversation_history.append({
-            "role": message.sender,
-            "content": message.content,
-            "sender_name": entrepreneur_name,
-        })
-
-        judge_responses = generate_judge_response(current_business_idea, conversation_history)
-        for judge_response, judge_name in judge_responses:
-            conversation_history.append({
-                "role": "Judge",
-                "content": judge_response,
-                "judge_name": judge_name,
-            })
-
-        return ChatResponse(
-            response=f"Responses from {len(judge_responses)} judge(s)",
-            sender="Judge",
-            conversation_history=conversation_history,
-        )
-
-    except Exception as e:
-        logger.error(f"Error sending message: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error sending message: {str(e)}")
-
-
-@app.get("/api/conversation-history")
-async def get_conversation_history():
-    return {
-        "conversation_history": conversation_history,
-        "business_idea": current_business_idea.dict() if current_business_idea else None,
-    }
-
-
 @app.post("/api/reset")
-async def reset_conversation():
-    """Reset the conversation and start fresh"""
-    global conversation_history, current_business_idea, judge_agents, current_judges_config, entrepreneur_name
-
-    conversation_history = []
-    current_business_idea = None
-    judge_agents = []
-    current_judges_config = []
-    entrepreneur_name = ""
-
-    return {"status": "success", "message": "Conversation reset"}
+async def reset_session(session_id: Optional[str] = None):
+    """Reset a specific session or all sessions."""
+    if session_id:
+        sessions.pop(session_id, None)
+        return {"status": "success", "message": f"Session {session_id} reset"}
+    else:
+        sessions.clear()
+        return {"status": "success", "message": "All sessions reset"}
 
 
 if __name__ == "__main__":
