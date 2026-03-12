@@ -208,7 +208,8 @@ def build_judge_prompt(
         f"The entrepreneur {entrepreneur_name} is pitching the following business:\n\n"
         f"{idea_str}{history}{debate}{round_ctx}\n\n"
         f"{mode.judge_instruction}\n\n"
-        "IMPORTANT: Do NOT start your response with your name. Just give your response directly."
+        "IMPORTANT: Do NOT start your response with your name. Just give your response directly.\n"
+        "IMPORTANT: You MUST respond entirely in Spanish."
     )
 
 
@@ -242,7 +243,8 @@ def generate_initial_pitch(session: Session) -> str:
 
         Be enthusiastic and concise. Highlight the problem you're solving, your solution,
         market opportunity, and why your team is uniquely positioned to succeed.
-        End with a clear ask for the investment amount.""",
+        End with a clear ask for the investment amount.
+        IMPORTANT: You MUST respond entirely in Spanish.""",
         expected_output="A compelling business pitch for Shark Tank",
         agent=entrepreneur_agent,
     )
