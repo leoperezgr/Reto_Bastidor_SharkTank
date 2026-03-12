@@ -1,5 +1,6 @@
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using System.Text;
 using UnityEngine;
 using UnityEngine.Networking;
@@ -11,6 +12,7 @@ public class ApiClient : MonoBehaviour
 
     private const string START_SESSION_ENDPOINT = "/api/session/start";
     private const string NEXT_TURN_ENDPOINT = "/api/session/next-turn";
+    private const string MODES_ENDPOINT = "/api/modes";
 
     public void StartSession(StartSessionRequest requestData, Action<SessionTurnResponse> onSuccess, Action<string> onError)
     {
@@ -26,6 +28,11 @@ public class ApiClient : MonoBehaviour
         }
 
         StartCoroutine(SendPostRequest(NEXT_TURN_ENDPOINT, requestData, onSuccess, onError));
+    }
+
+    public void GetModes(Action<Dictionary<string, string>> onSuccess, Action<string> onError = null)
+    {
+        StartCoroutine(SendGetRequest(MODES_ENDPOINT, onSuccess, onError));
     }
 
     private IEnumerator SendPostRequest<TRequest>(
@@ -85,6 +92,40 @@ public class ApiClient : MonoBehaviour
                 string parseError =
                     $"Failed to parse response: {e.Message}\n" +
                     $"Raw Response: {responseText}";
+                Debug.LogError(parseError);
+                onError?.Invoke(parseError);
+            }
+        }
+    }
+    private IEnumerator SendGetRequest(
+        string endpoint,
+        Action<Dictionary<string, string>> onSuccess,
+        Action<string> onError)
+    {
+        string url = baseUrl + endpoint;
+        Debug.Log($"GET {url}");
+
+        using (UnityWebRequest request = UnityWebRequest.Get(url))
+        {
+            yield return request.SendWebRequest();
+
+            if (request.result != UnityWebRequest.Result.Success)
+            {
+                string errorMsg = $"HTTP Error: {request.error}\nStatus Code: {(long)request.responseCode}";
+                Debug.LogError(errorMsg);
+                onError?.Invoke(errorMsg);
+                yield break;
+            }
+
+            try
+            {
+                string responseText = request.downloadHandler.text;
+                var response = JsonConvert.DeserializeObject<Dictionary<string, string>>(responseText);
+                onSuccess?.Invoke(response);
+            }
+            catch (Exception e)
+            {
+                string parseError = $"Parse Error: {e.Message}";
                 Debug.LogError(parseError);
                 onError?.Invoke(parseError);
             }
