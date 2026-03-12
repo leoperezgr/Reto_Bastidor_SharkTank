@@ -12,12 +12,12 @@ public class SharkTankUIManager : MonoBehaviour
     public string CurrentSessionId { get; private set; }
     public bool CanReply { get; private set; }
 
-    public void StartPitch()
+    public void StartPitch(string mode)
     {
         StartSessionRequest request = new StartSessionRequest
         {
             entrepreneur_name = "Carlos",
-            mode = "normal",
+            mode = mode,
             business_idea = new BusinessIdeaData
             {
                 name = "SharkLab AI",

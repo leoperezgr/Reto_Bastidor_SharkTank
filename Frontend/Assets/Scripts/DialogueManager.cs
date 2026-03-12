@@ -24,6 +24,9 @@ public class DialogueManager : MonoBehaviour
     public TMP_InputField pitchInput;
     public Button sendButton;
 
+    [Header("Mode Selection")]
+    public TMP_Dropdown modeDropdown;
+
     [Header("Paginación")]
     public Button nextButton;
     private bool isWaitingForNextPage = false;
@@ -34,16 +37,19 @@ public class DialogueManager : MonoBehaviour
     // Cola de mensajes pendientes de mostrar
     private Queue<AgentMessage> messageQueue = new Queue<AgentMessage>();
     private bool isShowingMessages = false;
+    private List<string> modeKeys = new List<string>();
 
     // Referencia al manager principal
     private SharkTankUIManager uiManager;
+    private ApiClient apiClient;
 
     void Start()
     {
         dialogueBox.SetActive(false);
         pitchPanel.SetActive(true);
 
-        uiManager = FindObjectOfType<SharkTankUIManager>();
+        uiManager = FindFirstObjectByType<SharkTankUIManager>();
+        apiClient = FindFirstObjectByType<ApiClient>();
 
         if (sendButton != null)
             sendButton.onClick.AddListener(OnSendClicked);
@@ -51,6 +57,10 @@ public class DialogueManager : MonoBehaviour
         // NUEVO: Escuchar al botón Next
         if (nextButton != null)
             nextButton.onClick.AddListener(OnNextClicked);
+
+        // Cargar modos del backend
+        if (apiClient != null)
+            apiClient.GetModes(OnModesReceived, (err) => Debug.LogWarning($"No se pudieron cargar los modos: {err}"));
     }
 
     // Llamado cuando el usuario presiona Send / Start Pitch
@@ -72,11 +82,15 @@ public class DialogueManager : MonoBehaviour
 
             if (sendButton != null) sendButton.interactable = false;
 
-            uiManager.StartPitch();
+            uiManager.StartPitch(GetSelectedMode());
         }
         else
         {
             // Turnos siguientes: enviar respuesta del entrepreneur
+            // 2. NUEVO: Volver a intercambiar los paneles
+            if (pitchPanel != null) pitchPanel.SetActive(false);
+            if (dialogueBox != null) dialogueBox.SetActive(true);
+
             if (sendButton != null) sendButton.interactable = false;
             uiManager.SendUserReply(pitch);
 
@@ -84,7 +98,33 @@ public class DialogueManager : MonoBehaviour
         }
     }
 
-    // Recibe la lista de mensajes del API y los encola
+    // ===== Dropdown de modos =====
+
+    private void OnModesReceived(Dictionary<string, string> modes)
+    {
+        if (modeDropdown == null) return;
+
+        modeDropdown.ClearOptions();
+        modeKeys.Clear();
+
+        var options = new List<string>();
+        foreach (var mode in modes)
+        {
+            modeKeys.Add(mode.Key);
+            options.Add(mode.Value);
+        }
+
+        modeDropdown.AddOptions(options);
+        Debug.Log($"Modos cargados: {modeKeys.Count}");
+    }
+
+    public string GetSelectedMode()
+    {
+        if (modeKeys.Count == 0 || modeDropdown == null) return "normal";
+        return modeKeys[modeDropdown.value];
+    }
+
+    // ===== Mostrar mensajes =====
     public void DisplayMessages(List<AgentMessage> messages)
     {
         foreach (var msg in messages)
@@ -136,6 +176,15 @@ public class DialogueManager : MonoBehaviour
     isShowingMessages = false;
 
     bool canReply = uiManager.CanReply;
+    // 1. NUEVO: Reactivar el panel visualmente para el Round 2
+    if (canReply)
+    {
+        if (pitchPanel != null) pitchPanel.SetActive(true);
+        
+        // Ocultar la caja de diálogo de los tiburones para despejar la pantalla
+        if (dialogueBox != null) dialogueBox.SetActive(false); 
+    }
+
     if (pitchInput != null) pitchInput.interactable = canReply;
     if (sendButton != null) sendButton.interactable = canReply;
 }
