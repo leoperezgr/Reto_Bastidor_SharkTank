@@ -1,4 +1,3 @@
-using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
@@ -7,8 +6,8 @@ using TMPro;
 public class SharkTankUIManager : MonoBehaviour
 {
     [SerializeField] private ApiClient apiClient;
-    [SerializeField] private List<AgentPanelUI> agentPanels; // Assign in Inspector
-    [SerializeField] private TMP_InputField userInputField; // For user replies
+    [SerializeField] private List<AgentPanelUI> agentPanels;
+    [SerializeField] private TMP_InputField userInputField;
     [SerializeField] private Button sendButton;
 
     private string currentSessionId;
@@ -18,7 +17,6 @@ public class SharkTankUIManager : MonoBehaviour
 
     private void Start()
     {
-        // Build the map from agentId to panel
         foreach (var panel in agentPanels)
         {
             if (!string.IsNullOrEmpty(panel.AgentId))
@@ -31,14 +29,12 @@ public class SharkTankUIManager : MonoBehaviour
             sendButton.onClick.AddListener(SendUserReply);
     }
 
-    // Start a new pitch session
     public void StartPitch()
     {
-        // Hardcoded request for demo - replace with actual data
         StartSessionRequest request = new StartSessionRequest
         {
             entrepreneur_name = "Carlos",
-            mode = "quick",
+            mode = "normal",
             business_idea = new BusinessIdeaData
             {
                 name = "SharkLab AI",
@@ -66,6 +62,14 @@ public class SharkTankUIManager : MonoBehaviour
                     role = "Deep Tech Investor & Former CTO",
                     goal = "Identify technology with genuine defensibility and the engineering team to scale it",
                     backstory = "Technical and scalability-focused investor"
+                },
+                new JudgeDefinition
+                {
+                    id = "the_shark",
+                    name = "Mark Cuban",
+                    role = "Serial Entrepreneur & Growth-Stage Investor",
+                    goal = "Back relentlessly competitive founders who will outwork and out-execute everyone in their market",
+                    backstory = "High-energy, sales-driven investor focused on hustle, competition, and execution."
                 }
             }
         };
@@ -73,7 +77,6 @@ public class SharkTankUIManager : MonoBehaviour
         apiClient.StartSession(request, OnSessionStarted, OnApiError);
     }
 
-    // Send user reply
     public void SendUserReply()
     {
         if (string.IsNullOrEmpty(currentSessionId))
@@ -82,7 +85,8 @@ public class SharkTankUIManager : MonoBehaviour
             return;
         }
 
-        string userMessage = userInputField != null ? userInputField.text : "";
+        string userMessage = userInputField != null ? userInputField.text.Trim() : "";
+
         if (string.IsNullOrEmpty(userMessage))
         {
             Debug.LogWarning("User message is empty.");
@@ -97,20 +101,23 @@ public class SharkTankUIManager : MonoBehaviour
 
         apiClient.NextTurn(request, OnNextTurnReceived, OnApiError);
 
-        // Clear input
-        if (userInputField != null) userInputField.text = "";
+        if (userInputField != null)
+            userInputField.text = "";
+
+        if (sendButton != null)
+            sendButton.interactable = false;
     }
 
-    // Render messages from response
-    public void RenderMessages(SessionTurnResponse response)
+    private void ClearAllPanels()
     {
-        // Clear all panels first
         foreach (var panel in agentPanels)
         {
             panel.Clear();
         }
+    }
 
-        // Render each message
+    public void RenderMessages(SessionTurnResponse response)
+    {
         foreach (var msg in response.messages)
         {
             if (agentPanelMap.TryGetValue(msg.agent_id, out AgentPanelUI panel))
@@ -123,16 +130,25 @@ public class SharkTankUIManager : MonoBehaviour
             }
         }
 
-        // Update session state
         currentSessionId = response.session_id;
         currentTurn = response.turn;
 
+        bool canReply = response.conversation_status == "awaiting_response";
+
+        if (userInputField != null)
+            userInputField.interactable = canReply;
+
+        if (sendButton != null)
+            sendButton.interactable = canReply;
+
         Debug.Log($"Rendered turn {currentTurn} for session {currentSessionId}");
+        Debug.Log($"Scene: {response.scene}, Status: {response.conversation_status}");
     }
 
     private void OnSessionStarted(SessionTurnResponse response)
     {
         Debug.Log("Session started successfully.");
+        ClearAllPanels();
         RenderMessages(response);
     }
 
@@ -145,6 +161,8 @@ public class SharkTankUIManager : MonoBehaviour
     private void OnApiError(string error)
     {
         Debug.LogError($"API Error: {error}");
-        // Optional: Show error UI
+
+        if (sendButton != null)
+            sendButton.interactable = true;
     }
 }

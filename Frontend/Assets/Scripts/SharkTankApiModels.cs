@@ -5,6 +5,15 @@ using UnityEngine;
 using UnityEngine.Networking;
 
 [Serializable]
+public class StartSessionRequest
+{
+    public string entrepreneur_name;
+    public string mode;
+    public BusinessIdeaData business_idea;
+    public List<JudgeDefinition> judges;
+}
+
+[Serializable]
 public class BusinessIdeaData
 {
     public string name;
@@ -27,19 +36,21 @@ public class JudgeDefinition
 }
 
 [Serializable]
-public class StartSessionRequest
-{
-    public string entrepreneur_name;
-    public string mode;
-    public BusinessIdeaData business_idea;
-    public List<JudgeDefinition> judges;
-}
-
-[Serializable]
 public class NextTurnRequest
 {
     public string session_id;
     public string user_message;
+}
+
+[Serializable]
+public class SessionTurnResponse
+{
+    public string session_id;
+    public int turn;
+    public string scene;
+    public List<AgentMessage> messages;
+    public UiHints ui_hints;
+    public string conversation_status;
 }
 
 [Serializable]
@@ -62,15 +73,4 @@ public class UiHints
     public string layout;
     public bool show_typing_effect;
     public bool auto_advance;
-}
-
-[Serializable]
-public class SessionTurnResponse
-{
-    public string session_id;
-    public int turn;
-    public string scene;
-    public List<AgentMessage> messages;
-    public UiHints ui_hints;
-    public string conversation_status;
 }
