@@ -1,76 +1,118 @@
-# README - FrontEnd
+# Shark Tank AI Simulator - Version Final
 
-Este proyecto es una aplicación de Unity que simula una sesión de "Shark Tank" (tanque de tiburones) interactiva. Permite a un emprendedor practicar pitches ante jueces virtuales impulsados por IA, utilizando un backend API para manejar la lógica de conversación multiagente.
+> Esta es la version final del proyecto. Todos los features han sido implementados y probados.
 
-El frontend de Unity maneja la interfaz de usuario, las llamadas a la API y la representación de mensajes de los agentes. Los scripts están diseñados para crear y gestionar GameObjects en Unity, ya que la escena no está completamente configurada aún.
+## Descripcion del Proyecto
 
-## ¿Qué hace cada script?
+Aplicacion full-stack que simula una sesion interactiva de "Shark Tank". Un emprendedor presenta su pitch ante jueces virtuales impulsados por IA (Google Gemini + CrewAI), quienes hacen preguntas, debaten entre si y emiten veredictos. El frontend en Unity maneja la interfaz visual y el backend en Python/FastAPI orquesta la logica multiagente.
 
-### ApiClient.cs
-Este script maneja todas las comunicaciones con el backend API. Incluye métodos para iniciar una nueva sesión de pitch (`StartSession`) y enviar turnos siguientes con mensajes del usuario (`NextTurn`). Utiliza UnityWebRequest para enviar solicitudes POST JSON y procesar respuestas. Es el puente entre Unity y el servidor backend corriendo en localhost:8000.
+## Arquitectura
 
-### SharkTankApiModels.cs
-Define todas las clases de datos serializables utilizadas para las solicitudes y respuestas de la API. Incluye modelos como `StartSessionRequest`, `NextTurnRequest`, `SessionTurnResponse`, `AgentMessage`, etc. Estas clases permiten serializar/deserializar JSON para interactuar con el backend.
+```
+Usuario (Unity) → ApiClient → FastAPI Backend → CrewAI Agents (Gemini) → Respuestas de Jueces → Unity UI
+```
 
-### SharkTankUIManager.cs
-Es el gestor principal de la interfaz de usuario. Maneja el inicio de sesiones, el envío de respuestas del usuario y la representación de mensajes en los paneles de agentes. Contiene lógica para mapear agentes a paneles UI y actualizar el estado de la sesión. Incluye métodos como `StartPitch`, `SendUserReply` y `RenderMessages`.
+- **Backend**: Python FastAPI + CrewAI + Google Gemini
+- **Frontend**: Unity (C#) con TextMeshPro
+- **Comunicacion**: REST API (JSON sobre HTTP)
 
-### AgentPanelUI.cs
-Representa un panel individual para cada agente (juez o emprendedor). Muestra el nombre del agente, el mensaje de texto y opcionalmente una imagen de retrato. Tiene métodos para establecer mensajes (`SetMessage`) y limpiar el panel (`Clear`). Cada instancia está asociada a un `agentId` específico.
+## Estructura del Proyecto
 
-### DemoBootstrap.cs
-Script de arranque para la demostración. Se ejecuta al inicio de la escena y automáticamente inicia una sesión de pitch llamando a `StartPitch` en el `SharkTankUIManager`. Es útil para probar el flujo sin intervención manual.
+```
+Reto_Bastidor_SharkTank/
+├── backend/
+│   ├── main.py              # Servidor FastAPI, endpoints y logica de sesion
+│   ├── judges_config.py     # Perfiles de jueces y modos de simulacion
+│   ├── demo.py              # Demo interactiva por consola (Rich CLI)
+│   ├── requirements.txt     # Dependencias Python
+│   └── .env                 # Configuracion (API key, modelo, puerto)
+├── Frontend/
+│   └── Assets/
+│       ├── Scripts/
+│       │   ├── ApiClient.cs            # Cliente HTTP para comunicacion con backend
+│       │   ├── SharkTankApiModels.cs   # Modelos de datos (request/response)
+│       │   ├── SharkTankUIManager.cs   # Orquestador principal de UI y sesion
+│       │   ├── DialogueManager.cs      # Sistema de dialogo, paginacion y cola de mensajes
+│       │   ├── AgentPanelUI.cs         # Panel individual por agente/juez
+│       │   └── TestDialogue.cs         # Utilidad de prueba
+│       └── Scenes/
+│           └── SampleScene.unity       # Escena principal
+└── README.txt
+```
 
-## Cómo aplicarlo en Unity
+## Jueces Disponibles (8)
 
-### Paso 1: Configurar la escena
-1. Abre Unity y carga el proyecto desde `Frontend/`.
-2. Crea una nueva escena o usa `SampleScene.unity` en `Assets/Scenes/`.
-3. Asegúrate de que tienes un Canvas en la escena para la UI (si no, crea uno: GameObject > UI > Canvas).
+| ID | Nombre | Rol |
+|----|--------|-----|
+| financial_hawk | Victoria Cross | Analista financiero implacable |
+| market_maverick | Raj Patel | Experto en mercados y tendencias |
+| tech_visionary | Nadia Osei | Visionaria tecnologica |
+| operations_expert | James Chen | Experto en operaciones y escalabilidad |
+| brand_guru | Sofia Martinez | Gurú de marca y marketing |
+| the_perfectionist | Steve Jobs | El perfeccionista |
+| the_disruptor | Elon Musk | El disruptor |
+| the_oracle | Warren Buffett | El oraculo de las inversiones |
 
-### Paso 2: Crear GameObjects y asignar scripts
-1. **ApiClient GameObject**:
-   - Crea un GameObject vacío (GameObject > Create Empty).
-   - Nómbralo "ApiClient".
-   - Agrega el script `ApiClient.cs` como componente.
-   - En el Inspector, configura `Base Url` si es necesario (por defecto es "http://localhost:8000").
+## Modos de Simulacion (5)
 
-2. **SharkTankUIManager GameObject**:
-   - Crea otro GameObject vacío y nómbralo "SharkTankUIManager".
-   - Agrega el script `SharkTankUIManager.cs`.
-   - En el Inspector:
-     - Asigna el `ApiClient` creado al campo `Api Client`.
-     - Crea o asigna un `InputField` para `User Input Field` (GameObject > UI > Input Field).
-     - Crea o asigna un `Button` para `Send Button` (GameObject > UI > Button), y en su OnClick, llama a `SharkTankUIManager.SendUserReply`.
-     - Para `Agent Panels`, necesitarás crear paneles para cada agente.
+- **Quick**: Un veredicto decisivo rapido
+- **Normal**: 2 rondas de preguntas/respuestas + veredicto
+- **Full Tank**: 4 rondas de Q&A + negociacion
+- **Rapid Fire**: Todos los jueces preguntan simultaneamente
+- **Panel Debate**: Los jueces debaten entre si antes de emitir veredictos
 
-3. **Crear AgentPanelUI GameObjects**:
-   - Para cada agente (ej. "entrepreneur", "financial_hawk", "tech_visionary"), crea un GameObject vacío o un Panel UI (GameObject > UI > Panel).
-   - Agrega el script `AgentPanelUI.cs` a cada uno.
-   - En el Inspector de cada `AgentPanelUI`:
-     - Establece `Agent Id` al ID correspondiente (ej. "financial_hawk").
-     - Asigna `Agent Name Text` a un Text UI child.
-     - Asigna `Message Text` a otro Text UI child.
-     - Opcional: Asigna `Portrait Image` a una Image UI.
-   - Agrega estos `AgentPanelUI` a la lista `Agent Panels` en `SharkTankUIManager`.
+## Endpoints del Backend
 
-4. **DemoBootstrap GameObject**:
-   - Crea un GameObject vacío y nómbralo "DemoBootstrap".
-   - Agrega el script `DemoBootstrap.cs`.
-   - En el Inspector, asigna el `SharkTankUIManager` al campo correspondiente.
+| Metodo | Ruta | Descripcion |
+|--------|------|-------------|
+| POST | /api/session/start | Iniciar nueva sesion de pitch |
+| POST | /api/session/next-turn | Enviar respuesta y obtener feedback |
+| GET | /api/modes | Listar modos de simulacion |
+| GET | /api/judges | Listar jueces disponibles |
+| POST | /api/test-connection | Probar conectividad con Gemini |
+| POST | /api/reset | Reiniciar sesiones |
 
-### Paso 3: Configurar la UI
-- Asegúrate de que todos los elementos UI (Text, InputField, Button, Panels) estén correctamente posicionados en el Canvas.
-- Para los paneles de agentes, organízalos en una layout apropiada (ej. horizontal o vertical).
+## Como Ejecutar
 
-### Paso 4: Ejecutar el proyecto
-1. Asegúrate de que el backend esté corriendo en localhost:8000 (consulta el README del backend en `backend/`).
-2. Presiona Play en Unity.
-3. La escena debería iniciar automáticamente la sesión de pitch gracias a `DemoBootstrap`.
-4. Usa el InputField para enviar mensajes y observa cómo se actualizan los paneles de agentes.
+### Backend
+```bash
+cd backend
+pip install -r requirements.txt
+# Configurar .env con GEMINI_API_KEY
+uvicorn main:app --host 0.0.0.0 --port 8000
+```
 
-### Notas adicionales
-- Los scripts usan Unity's UI system (Text, InputField, Button, Image). Asegúrate de tener el paquete TextMeshPro instalado si usas TMP components.
-- Para producción, considera manejar errores de red y estados de carga.
-- Los datos de la sesión están hardcodeados en `StartPitch` para demo; en un proyecto real, obténlos de inputs del usuario.
-- Si encuentras errores, revisa la consola de Unity y el backend logs.
+### Frontend (Unity)
+1. Abrir el proyecto `Frontend/` en Unity.
+2. Cargar la escena `SampleScene.unity`.
+3. Asegurarse de que el backend este corriendo en `localhost:8000`.
+4. Presionar Play.
+
+### Demo por Consola
+```bash
+cd backend
+python demo.py
+```
+
+## Flujo de Uso
+
+1. El usuario llena el formulario con los datos de su startup (nombre, descripcion, mercado, modelo de ingresos, etc.).
+2. Selecciona los jueces y el modo de simulacion.
+3. Escribe su pitch inicial y presiona "Send".
+4. Los jueces responden con preguntas y comentarios (mostrados secuencialmente con paginacion).
+5. El usuario responde a las preguntas.
+6. Se repite hasta que la sesion termina con veredictos finales.
+
+## Dependencias
+
+### Backend
+- fastapi, uvicorn
+- crewai
+- python-dotenv
+- google-generativeai
+- pydantic
+- rich
+
+### Frontend
+- Unity (con TextMeshPro)
+- Newtonsoft.Json (para serializacion)
